@@ -1,7 +1,0 @@
-node_modules
-auth
-sessions.json
-database/user.json
-database/akses.json
-database/config.js
-.env
