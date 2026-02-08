@@ -8,11 +8,13 @@ Project ini adalah panel web untuk mengelola dan mengirim pesan "attack" (prank/
 project/
 ├── index.js                # Server backend utama (Node.js/Express/Telegraf)
 ├── package.json            # Daftar dependensi
+├── lib/                    # Logika bisnis terpisah
+│   └── attack_utils.js     # Fungsi serangan WhatsApp
 ├── database/               # Folder penyimpanan data
 │   ├── config.js           # Konfigurasi Token, Owner ID, Port
 │   ├── user.json           # Data user untuk login web
 │   └── akses.json          # Hak akses (owner, reseller, dll)
-└── dewa_verse/             # Frontend HTML
+└── invirusblastv2/         # Frontend HTML
     ├── websitev_4.html     # Halaman Login
     └── dashboard.html      # Halaman Dashboard Utama
 ```
@@ -59,13 +61,14 @@ npm install
 Sebelum menjalankan, pastikan file konfigurasi sudah benar.
 
 **File: `database/config.js`**
-Edit file ini untuk mengubah Token Bot, ID Owner, Port, dan IP VPS.
+Edit file ini untuk mengubah Token Bot, ID Owner, Port, IP VPS, dan Secret Key.
 ```javascript
 module.exports = {
   tokens: "TOKEN_BOT_TELEGRAM",
   owner: "ID_TELEGRAM_OWNER",
-  port: "1466",
-  ipvps: "IP_VPS_ANDA"
+  port: "4384",
+  ipvps: "IP_VPS_ANDA",
+  secret: "YOUR_SECRET_KEY"
 };
 ```
 
@@ -81,7 +84,7 @@ node index.js
 ```
 
 Jika berhasil, akan muncul pesan:
-`✓ Server aktif di port 1466`
+`✓ Server aktif di port 4384`
 
 ### 5. Penggunaan
 1.  Buka browser dan akses: `http://localhost:1466` (atau IP VPS Anda).

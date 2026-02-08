@@ -297,6 +297,28 @@
             transform: scale(0.98);
         }
 
+        /* Responsive Adjustments */
+        @media (min-width: 768px) {
+            body {
+                padding: 40px 10%;
+            }
+            .panel {
+                padding: 40px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .brand {
+                font-size: 16px;
+            }
+            .profile-card {
+                padding: 15px;
+            }
+            .banner {
+                height: 150px;
+            }
+        }
+
         /* Loading */
         .loader {
             display: none;
@@ -399,6 +421,17 @@
             <input type="hidden" name="mode" id="attackMode">
 
             <div class="form-group">
+                <label class="label">Select Sender</label>
+                <div class="input-wrapper">
+                    <div class="input-icon"><i class="fas fa-robot"></i></div>
+                    <select name="sender" id="senderSelect" class="input-field">
+                        {{senderOptions}}
+                    </select>
+                    <div class="dropdown-arrow"><i class="fas fa-chevron-down"></i></div>
+                </div>
+            </div>
+
+            <div class="form-group">
                 <label class="label">Target Number</label>
                 <div class="input-wrapper">
                     <div class="input-icon"><i class="fas fa-mobile-alt"></i></div>
@@ -409,6 +442,7 @@
             <div class="form-group">
                 <label class="label">Select Bug</label>
                 <div class="input-wrapper">
+                    <div class="input-icon"><i class="fas fa-virus"></i></div>
                     <select id="bugSelect" class="input-field">
                         <option value="fc">Forclose Andro</option>
                         <option value="delay">Delay Bug</option>
@@ -458,7 +492,13 @@
         function executeAttack() {
             const target = document.getElementById('targetNumber').value;
             const mode = document.getElementById('bugSelect').value;
+            const sender = document.getElementById('senderSelect').value;
             const modeInput = document.getElementById('attackMode');
+
+            if (!sender) {
+                showToast("No active sender available!");
+                return;
+            }
 
             if (!target) {
                 showToast("Please enter target number!");
