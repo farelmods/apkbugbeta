@@ -5,20 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Login - Dark Engine</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Orbitron:wght@500;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary: #c62828;
+            --primary-glow: rgba(198, 40, 40, 0.5);
             --text-main: #ffffff;
-            --input-bg: rgba(0, 0, 0, 0.6);
-            --border: #333;
+            --input-bg: rgba(0, 0, 0, 0.7);
+            --border: #444;
+            --anti-magic: #000;
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Rajdhani', sans-serif;
         }
 
         body {
@@ -27,7 +28,17 @@
             align-items: center;
             justify-content: center;
             overflow: hidden;
-            background: #000;
+            background: #050505;
+            font-family: 'Rajdhani', sans-serif;
+        }
+
+        /* Anti-Magic Particle Canvas */
+        #particle-canvas {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+            pointer-events: none;
         }
 
         /* Background Video */
@@ -37,58 +48,81 @@
             width: 100%; height: 100%;
             object-fit: cover;
             z-index: -1;
-            filter: brightness(0.4);
+            filter: brightness(0.3) contrast(1.2);
         }
 
-        /* Login Card */
+        /* Grimoire Login Card */
         .login-card {
             width: 90%;
-            max-width: 400px;
-            background: rgba(10, 10, 10, 0.75);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(198, 40, 40, 0.3);
-            border-radius: 20px;
-            padding: 40px 30px;
+            max-width: 420px;
+            background: rgba(15, 15, 15, 0.85);
+            backdrop-filter: blur(15px);
+            border: 2px solid #222;
+            border-radius: 15px;
+            padding: 50px 35px;
             text-align: center;
-            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1),
+                        inset 0 0 20px rgba(198, 40, 40, 0.2);
             position: relative;
+            z-index: 10;
+            overflow: hidden;
         }
 
         .login-card::before {
             content: '';
             position: absolute;
-            top: -2px; left: -2px; right: -2px; bottom: -2px;
-            border-radius: 22px;
-            background: linear-gradient(45deg, var(--primary), transparent, var(--primary));
-            z-index: -1;
-            animation: border-glow 3s linear infinite;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: url('https://www.transparenttextures.com/patterns/dark-leather.png');
+            opacity: 0.1;
+            pointer-events: none;
         }
 
-        @keyframes border-glow {
-            0% { opacity: 0.5; }
-            50% { opacity: 1; }
-            100% { opacity: 0.5; }
+        /* Magical Border Glow */
+        .border-glow {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            border-radius: 15px;
+            border: 1px solid transparent;
+            background: linear-gradient(45deg, var(--primary), transparent, var(--primary)) border-box;
+            -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: destination-out;
+            mask-composite: exclude;
+            opacity: 0.6;
+            animation: rotate-glow 5s linear infinite;
+        }
+
+        @keyframes rotate-glow {
+            0% { filter: hue-rotate(0deg) brightness(1); }
+            50% { filter: hue-rotate(10deg) brightness(1.5); }
+            100% { filter: hue-rotate(0deg) brightness(1); }
+        }
+
+        .logo-container {
+            margin-bottom: 35px;
+            position: relative;
         }
 
         .logo {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 32px;
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 42px;
             font-weight: 700;
             color: var(--text-main);
-            margin-bottom: 10px;
-            text-shadow: 0 0 10px var(--primary);
-            letter-spacing: 2px;
+            text-shadow: 0 0 15px var(--primary-glow);
+            letter-spacing: 4px;
+            text-transform: uppercase;
         }
 
-        .subtitle {
-            font-size: 14px;
-            color: #aaa;
-            margin-bottom: 30px;
-            letter-spacing: 1px;
+        .logo-sub {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 10px;
+            color: var(--primary);
+            letter-spacing: 5px;
+            margin-top: -5px;
+            display: block;
         }
 
         .input-group {
-            margin-bottom: 20px;
+            margin-bottom: 25px;
             position: relative;
         }
 
@@ -96,127 +130,260 @@
             width: 100%;
             background: var(--input-bg);
             border: 1px solid var(--border);
-            padding: 15px 15px 15px 45px;
+            padding: 16px 15px 16px 50px;
             color: var(--text-main);
-            border-radius: 10px;
-            font-size: 16px;
+            border-radius: 8px;
+            font-size: 15px;
             outline: none;
-            transition: 0.3s;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 600;
         }
 
         .input-field:focus {
             border-color: var(--primary);
-            box-shadow: 0 0 10px rgba(198, 40, 40, 0.3);
+            background: rgba(20, 0, 0, 0.6);
+            box-shadow: 0 0 15px var(--primary-glow);
+            transform: translateY(-2px);
         }
 
         .input-icon {
             position: absolute;
-            left: 15px;
+            left: 18px;
             top: 50%;
             transform: translateY(-50%);
             color: var(--primary);
+            font-size: 18px;
+            transition: 0.3s;
+        }
+
+        .input-field:focus + .input-icon {
+            color: #ff5252;
+            text-shadow: 0 0 8px var(--primary);
         }
 
         .login-btn {
             width: 100%;
-            padding: 15px;
-            background: var(--primary);
+            padding: 18px;
+            background: linear-gradient(135deg, #b71c1c 0%, #d32f2f 100%);
             color: white;
             border: none;
-            border-radius: 10px;
+            border-radius: 8px;
             font-size: 16px;
             font-weight: 700;
             font-family: 'Orbitron', sans-serif;
             cursor: pointer;
-            transition: 0.3s;
+            transition: 0.4s;
             text-transform: uppercase;
-            letter-spacing: 2px;
-            margin-top: 10px;
+            letter-spacing: 3px;
+            margin-top: 15px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+        }
+
+        .login-btn::after {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%; width: 200%; height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.2) 0%, transparent 70%);
+            transform: scale(0);
+            transition: 0.5s;
         }
 
         .login-btn:hover {
-            background: #b71c1c;
-            box-shadow: 0 0 20px rgba(198, 40, 40, 0.6);
+            background: linear-gradient(135deg, #d32f2f 0%, #f44336 100%);
+            box-shadow: 0 0 25px var(--primary-glow);
+            transform: translateY(-3px);
+        }
+
+        .login-btn:hover::after {
+            transform: scale(1);
+        }
+
+        .login-btn:active {
+            transform: translateY(1px);
         }
 
         .footer {
-            margin-top: 20px;
-            font-size: 12px;
-            color: #666;
+            margin-top: 30px;
+            font-size: 13px;
+            color: #888;
+            letter-spacing: 1px;
         }
 
         .footer a {
             color: var(--primary);
             text-decoration: none;
+            font-weight: 700;
+            transition: 0.3s;
         }
 
+        .footer a:hover {
+            color: #ff5252;
+            text-shadow: 0 0 10px var(--primary);
+        }
+
+        /* Toast Notifications */
         .toast {
             position: fixed;
-            top: 20px;
+            top: 30px;
             left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.9);
+            transform: translateX(-50%) translateY(-100px);
+            background: rgba(10, 10, 10, 0.95);
             border: 1px solid var(--primary);
             color: white;
-            padding: 10px 20px;
-            border-radius: 5px;
+            padding: 15px 30px;
+            border-radius: 50px;
             z-index: 1000;
-            display: none;
+            transition: 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            font-weight: 600;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .toast i {
+            color: var(--primary);
         }
 
     </style>
 </head>
 <body>
 
+    <canvas id="particle-canvas"></canvas>
+
     <video class="video-bg" autoplay muted loop playsinline>
         <source src="https://files.catbox.moe/8f5d29.mp4" type="video/mp4">
     </video>
 
     <div class="login-card">
-        <div class="logo">DARK ENGINE</div>
-        <p class="subtitle">AUTHENTICATION REQUIRED</p>
+        <div class="border-glow"></div>
+        <div class="logo-container">
+            <h1 class="logo">Dark Engine</h1>
+            <span class="logo-sub">BLACK CLOVER EDITION</span>
+        </div>
 
         <form action="/auth" method="POST">
             <div class="input-group">
-                <i class="fas fa-user input-icon"></i>
-                <input type="text" name="username" class="input-field" placeholder="Username" required autocomplete="off">
+                <input type="text" name="username" class="input-field" placeholder="Magic Knight Name" required autocomplete="off">
+                <i class="fas fa-user-shield input-icon"></i>
             </div>
 
             <div class="input-group">
-                <i class="fas fa-key input-icon"></i>
-                <input type="password" name="key" class="input-field" placeholder="Access Key" required>
+                <input type="password" name="key" class="input-field" placeholder="Grimoire Access Key" required>
+                <i class="fas fa-scroll input-icon"></i>
             </div>
 
             <button type="submit" class="login-btn">
-                Access System
+                Release Seal
             </button>
         </form>
 
         <div class="footer">
-            No access? <a href="https://wa.me/6285845663184">Contact Admin</a>
+            No Grimoire? <a href="https://wa.me/6285845663184">Summon Admin</a>
         </div>
     </div>
 
-    <div class="toast" id="toast"></div>
+    <div class="toast" id="toast">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span id="toast-msg"></span>
+    </div>
 
     <audio id="bgAudio" loop>
         <source src="https://files.catbox.moe/06u2xx.mp4" type="audio/mpeg">
     </audio>
 
     <script>
+        // Anti-Magic Particle Animation
+        const canvas = document.getElementById('particle-canvas');
+        const ctx = canvas.getContext('2d');
+        let particles = [];
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        window.addEventListener('resize', resize);
+        resize();
+
+        class Particle {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.size = Math.random() * 3 + 1;
+                this.speedX = (Math.random() - 0.5) * 1.5;
+                this.speedY = (Math.random() - 0.5) * 1.5;
+                this.life = Math.random() * 100 + 100;
+                this.opacity = Math.random();
+            }
+
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.life--;
+
+                if (this.life <= 0 || this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
+                    this.reset();
+                }
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(198, 40, 40, ${this.opacity * (this.life / 200)})`;
+                ctx.fill();
+
+                // Draw tiny magic trails
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#c62828';
+            }
+        }
+
+        function initParticles() {
+            particles = [];
+            for (let i = 0; i < 60; i++) {
+                particles.push(new Particle());
+            }
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            particles.forEach(p => {
+                p.update();
+                p.draw();
+            });
+            requestAnimationFrame(animate);
+        }
+
+        initParticles();
+        animate();
+
+        // Audio Management
         const audio = document.getElementById('bgAudio');
         audio.volume = 0.2;
         document.body.addEventListener('click', () => {
             if(audio.paused) audio.play();
         }, { once: true });
 
-        // Parse URL query for error msg
+        // Toast Logic
         const params = new URLSearchParams(window.location.search);
         if(params.has('msg')) {
             const toast = document.getElementById('toast');
-            toast.innerText = params.get('msg');
-            toast.style.display = 'block';
-            setTimeout(() => toast.style.display = 'none', 4000);
+            const msgSpan = document.getElementById('toast-msg');
+            msgSpan.innerText = params.get('msg');
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 5000);
         }
     </script>
 
